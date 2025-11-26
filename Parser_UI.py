@@ -6,6 +6,10 @@ from jsonschema import validate
 from paho.mqtt import client as mqtt
 import threading
 
+
+log_buffer = []
+buffer_lock = threading.Lock()
+# %%
 # ------------------------------------------------------
 # PART 1 — EXCEL → JSON CONVERTER
 # ------------------------------------------------------
@@ -132,22 +136,23 @@ def parse_packet(raw_packet, df_dict):
 stop_flag = False
 
 def mqtt_listener(broker, port, topic, df_dict):
-    global stop_flag
-    stop_flag = False
+    global stop_flag, log_buffer
 
     client = mqtt.Client()
 
     def on_connect(client, userdata, flags, rc):
-        st.session_state["mqtt_log"].append(f"Connected (code {rc})")
+        with buffer_lock:
+            log_buffer.append(f"Connected (code {rc})")
         client.subscribe(topic)
 
     def on_message(client, userdata, msg):
         raw = msg.payload.decode("utf-8", "ignore")
         df = parse_packet(raw, df_dict)
 
-        st.session_state["mqtt_log"].append(
-            f"### Topic: {msg.topic}\n```\n{df.to_string()}\n```"
-        )
+        with buffer_lock:
+            log_buffer.append(
+                f"### Topic: {msg.topic}\n```\n{df.to_string()}\n```"
+            )
 
     client.on_connect = on_connect
     client.on_message = on_message
@@ -157,7 +162,7 @@ def mqtt_listener(broker, port, topic, df_dict):
     while not stop_flag:
         client.loop(timeout=1)
 
-
+# %%
 # ------------------------------------------------------
 # STREAMLIT UI
 # ------------------------------------------------------
@@ -243,5 +248,7 @@ if col2.button("⏹ Stop MQTT Listener"):
 # ------------------------------------------------------
 # AUTO-UPDATING UI BLOCK
 # ------------------------------------------------------
-logs = "\n\n".join(st.session_state["mqtt_log"][-30:])
+with buffer_lock:
+    logs = "\n\n".join(log_buffer[-30:])
+
 output_box.markdown(logs)
