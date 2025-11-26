@@ -76,7 +76,14 @@ def excel_to_json(uploaded_file):
     for col in required:
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}\nAvailable columns: {list(df.columns)}")
-
+            
+    if uploaded_excel and st.button("Convert Excel → JSON"):
+    df_raw = pd.read_excel(uploaded_excel, header=None)
+    df = normalize_headers(df_raw)
+    if df is None:
+        st.error("Failed to detect header row.")
+        st.stop()
+        
     registers = []
 
     for _, row in df.iterrows():
