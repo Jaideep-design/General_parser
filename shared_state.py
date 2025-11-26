@@ -3,7 +3,6 @@ import threading
 import time
 from collections import defaultdict
 
-# Thread-safe dict for storing latest MQTT raw + parsed message
 state_lock = threading.Lock()
 
 shared_state = {
@@ -31,9 +30,7 @@ def clear_state():
         shared_state["last_update_time"] = None
 
 
-# -------------------------------
-# Track device online/offline
-# -------------------------------
+# Track device online activity
 activity_lock = threading.Lock()
 last_activity = defaultdict(lambda: 0)
 
