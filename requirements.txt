@@ -3,3 +3,4 @@ streamlit-autorefresh
 pandas
 paho-mqtt
 openpyxl
+jsonschema
