@@ -11,7 +11,7 @@ from mqtt_listener import start_mqtt_thread
 
 
 # Auto refresh UI every 5 seconds
-st_autorefresh(interval=5000, key="refresh_app")
+# st_autorefresh(interval=5000, key="refresh_app")
 
 st.title("📡 Live AC Parser — Excel → JSON → MQTT → Parsed Data")
 
