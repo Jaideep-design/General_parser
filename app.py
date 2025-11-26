@@ -3,6 +3,8 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import pandas as pd
 import json
+import jsonschema
+from jsonschema import validate
 
 from shared_state import get_state, is_topic_online, clear_state
 from mqtt_listener import start_mqtt_thread
@@ -18,49 +20,97 @@ st.title("📡 Live AC Parser — Excel → JSON → MQTT → Parsed Data")
 # -----------------------------------------
 uploaded_excel = st.file_uploader("Upload Dictionary Excel", type=["xlsx"])
 
-def normalize_headers(df_raw):
+SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "properties": {
+            "short_name": {"type": "string"},
+            "index": {"type": "integer", "minimum": 0},
+            "size": {"type": "integer", "minimum": 1},
+            "format": {"type": "string", "enum": ["ASCII", "DEC", "HEX", "BIN"]},
+            "signed": {"type": "boolean"},
+            "scaling": {"type": "number"},
+            "offset": {"type": "number"},
+        },
+        "required": ["short_name", "index", "size", "format", "signed", "scaling", "offset"],
+    }
+}
+
+
+def normalize_excel_headers(uploaded_file):
+    """Detect header row (first with ≥3 non-null cells)."""
+    df_raw = pd.read_excel(uploaded_file, header=None)
     header_row = None
+
     for i in range(len(df_raw)):
         if df_raw.iloc[i].count() >= 3:
             header_row = i
             break
+
     if header_row is None:
-        return None
-    df = df_raw.iloc[header_row+1:].copy()
-    df.columns = df_raw.iloc[header_row].tolist()
+        raise ValueError("Header row not detected in Excel.")
+
+    header = df_raw.iloc[header_row].tolist()
+    df = df_raw.iloc[header_row + 1:].copy()
+    df.columns = header
     df.dropna(how="all", inplace=True)
+
     return df
 
-if uploaded_excel and st.button("Convert Excel → JSON"):
-    df_raw = pd.read_excel(uploaded_excel, header=None)
-    df = normalize_headers(df_raw)
-    if df is None:
-        st.error("Failed to detect header row.")
-        st.stop()
+
+def validate_register(reg):
+    """Validate each register using the JSON SCHEMA."""
+    try:
+        validate(instance=reg, schema=SCHEMA["items"])
+        return True, None
+    except jsonschema.exceptions.ValidationError as err:
+        return False, err.message
+
+
+def excel_to_json(uploaded_file):
+    """Convert Excel rows → list of register dicts."""
+    df = normalize_excel_headers(uploaded_file)
+
+    required = ["Short name", "Index", "Size [byte]", "Data format"]
+    for col in required:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}\nAvailable columns: {list(df.columns)}")
 
     registers = []
+
     for _, row in df.iterrows():
+        # Skip totally empty or incomplete rows
+        if pd.isna(row["Short name"]) or pd.isna(row["Index"]):
+            continue
+
+        # Format normalization
+        fmt = str(row["Data format"]).strip().upper()
+        if fmt == "BINARY":
+            fmt = "BIN"
+        if fmt not in ["ASCII", "DEC", "HEX", "BIN"]:
+            fmt = "DEC"  # Default fallback
+
+        # Offset
+        offset_val = row["Offset"] if ("Offset" in df.columns and pd.notnull(row["Offset"])) else 0
+
         reg = {
-            "short_name": str(row["Short name"]).upper(),
+            "short_name": str(row["Short name"]).strip().upper(),
             "index": int(row["Index"]),
             "size": int(row["Size [byte]"]),
-            "format": str(row["Data format"]).upper(),
-            "signed": str(row.get("Signed/Unsigned", "U")).upper() == "S",
+            "format": fmt,
+            "signed": str(row.get("Signed/Unsigned", "U")).strip().upper() == "S",
             "scaling": float(row.get("Scaling factor", 1.0)),
-            "offset": float(row.get("Offset", 0)),
+            "offset": float(offset_val),
         }
+
+        ok, err = validate_register(reg)
+        if not ok:
+            raise ValueError(f"Validation Failed at index {reg['index']}: {err}")
+
         registers.append(reg)
 
-    st.session_state["json_dict"] = registers
-    st.success("Dictionary JSON created!")
-    st.json(registers[:5])
-
-    st.download_button(
-        "Download dictionary.json",
-        json.dumps(registers, indent=2),
-        "dictionary.json",
-        "application/json"
-    )
+    return registers
 
 # -----------------------------------------
 # 2. MQTT PARAMETERS + START BUTTON
