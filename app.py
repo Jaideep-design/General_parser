@@ -6,7 +6,7 @@ import json
 import jsonschema
 from jsonschema import validate
 
-from shared_state import get_state, is_topic_online, clear_state
+from shared_state_UI import get_latest_data, is_topic_online, clear_latest_data
 from mqtt_listener import start_mqtt_thread
 
 
