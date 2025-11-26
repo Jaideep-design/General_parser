@@ -1,43 +1,36 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Apr 19 12:22:11 2025
+
+@author: Admin
+"""
+
 # shared_state.py
 import threading
-import time
 from collections import defaultdict
+import time
 
-state_lock = threading.Lock()
+latest_data_lock = threading.Lock()
+latest_data = {"PV_V": 100, "PV_W": 100}
 
-shared_state = {
-    "raw_packet": None,
-    "parsed_df": None,
-    "last_update_time": None,
-}
+def get_latest_data():
+    with latest_data_lock:
+        return latest_data.copy()
 
-def update_state(raw_packet=None, parsed_df=None):
-    with state_lock:
-        if raw_packet is not None:
-            shared_state["raw_packet"] = raw_packet
-        if parsed_df is not None:
-            shared_state["parsed_df"] = parsed_df
-        shared_state["last_update_time"] = time.time()
+def clear_latest_data():
+    with latest_data_lock:
+        latest_data.clear()
 
-def get_state():
-    with state_lock:
-        return shared_state.copy()
-
-def clear_state():
-    with state_lock:
-        shared_state["raw_packet"] = None
-        shared_state["parsed_df"] = None
-        shared_state["last_update_time"] = None
-
-
-# Track device online activity
+# Add this for tracking online status
+last_mqtt_activity = defaultdict(lambda: 0)
 activity_lock = threading.Lock()
-last_activity = defaultdict(lambda: 0)
 
 def update_activity(topic):
     with activity_lock:
-        last_activity[topic] = time.time()
+        last_mqtt_activity[topic] = time.time()
 
-def is_topic_online(topic, timeout=60):
+def is_topic_online(topic, threshold=120):  # seconds
     with activity_lock:
-        return (time.time() - last_activity[topic]) < timeout
+        last_seen = last_mqtt_activity.get(topic, 0)
+        return (time.time() - last_seen) < threshold
+
