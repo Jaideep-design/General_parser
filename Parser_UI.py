@@ -7,7 +7,7 @@ from paho.mqtt import client as mqtt
 import threading
 
 # ------------------------------------------------------
-# PART 1 — EXCEL → JSON CONVERTER (your code embedded)
+# PART 1 — EXCEL → JSON CONVERTER
 # ------------------------------------------------------
 
 SCHEMA = {
@@ -95,7 +95,7 @@ def excel_to_json(uploaded_file):
 
 
 # ------------------------------------------------------
-# PART 2 — PARSER LOGIC (cleaned to use ONLY one dictionary)
+# PART 2 — PARSER LOGIC (uses ONLY uploaded dictionary)
 # ------------------------------------------------------
 
 def process_all_registers(df_dict, raw_packet):
@@ -115,7 +115,7 @@ def process_all_registers(df_dict, raw_packet):
 
 
 def apply_dataformat_conversion(df):
-    df["Value"] = df["Raw"]  # same logic as your script, extend further if needed
+    df["Value"] = df["Raw"]  # Expand logic later if needed
     return df
 
 
@@ -126,25 +126,28 @@ def parse_packet(raw_packet, df_dict):
 
 
 # ------------------------------------------------------
-# PART 3 — MQTT LISTENER (uses only uploaded dictionary)
+# PART 3 — THREAD-SAFE MQTT LISTENER
 # ------------------------------------------------------
 
 stop_flag = False
 
-def mqtt_listener(broker, port, topic, df_dict, output_box):
+def mqtt_listener(broker, port, topic, df_dict):
     global stop_flag
     stop_flag = False
 
     client = mqtt.Client()
 
     def on_connect(client, userdata, flags, rc):
-        output_box.write(f"Connected (code {rc})")
+        st.session_state["mqtt_log"].append(f"Connected (code {rc})")
         client.subscribe(topic)
 
     def on_message(client, userdata, msg):
         raw = msg.payload.decode("utf-8", "ignore")
         df = parse_packet(raw, df_dict)
-        output_box.write(f"### Topic: {topic}\n```\n{df.to_string()}\n```")
+
+        st.session_state["mqtt_log"].append(
+            f"### Topic: {msg.topic}\n```\n{df.to_string()}\n```"
+        )
 
     client.on_connect = on_connect
     client.on_message = on_message
@@ -156,31 +159,38 @@ def mqtt_listener(broker, port, topic, df_dict, output_box):
 
 
 # ------------------------------------------------------
-# STREAMLIT UI (ONLY 3 INPUTS — clean)
+# STREAMLIT UI
 # ------------------------------------------------------
 
-st.title("📡 AC Data Dictionary → JSON → MQTT Parser")
+st.title("📡 AC Dictionary → JSON → Live MQTT Parser")
 
-# --------------------------
-# INPUT 1: Device Name
-# --------------------------
+# Initialize log state
+if "mqtt_log" not in st.session_state:
+    st.session_state["mqtt_log"] = []
+
+
+# --------------------------------------------
+# INPUT 1: Device name
+# --------------------------------------------
 device_name = st.text_input("Device Name", value="EZMCSACD00001")
 
-# --------------------------
-# INPUT 2: MQTT Topic
-# --------------------------
+# --------------------------------------------
+# INPUT 2: MQTT subscriber topic
+# --------------------------------------------
 mqtt_topic = st.text_input("Subscriber Topic", value=f"/AC/2/{device_name}/Datalog")
 
-# --------------------------
+# --------------------------------------------
 # INPUT 3: Upload Dictionary Excel
-# --------------------------
+# --------------------------------------------
 uploaded_excel = st.file_uploader("Upload Dictionary Excel", type=["xlsx"])
 
+
+# Convert Excel → JSON
 if uploaded_excel and st.button("Convert Excel → JSON"):
     try:
         registers = excel_to_json(uploaded_excel)
         st.session_state["parser_json"] = registers
-        st.success("JSON Created Successfully!")
+        st.success("Dictionary JSON generated!")
         st.json(registers[:5])
 
         st.download_button(
@@ -195,31 +205,43 @@ if uploaded_excel and st.button("Convert Excel → JSON"):
 
 
 # ------------------------------------------------------
-# MQTT LISTENER SECTION
+# MQTT PARAMETERS
 # ------------------------------------------------------
-st.header("Live Parser")
+st.header("Live MQTT Parser")
 
 broker = st.text_input("MQTT Broker", value="ecozen.ai")
 port = st.number_input("MQTT Port", value=1883)
 
 output_box = st.empty()
 
+# ------------------------------------------------------
+# Start / Stop buttons
+# ------------------------------------------------------
 col1, col2 = st.columns(2)
 
 if col1.button("▶ Start MQTT Listener"):
 
     if "parser_json" not in st.session_state:
-        st.error("Convert the dictionary first!")
+        st.error("Please convert an Excel dictionary first!")
     else:
         df_dict = pd.DataFrame(st.session_state["parser_json"])
 
         threading.Thread(
             target=mqtt_listener,
-            args=(broker, port, mqtt_topic, df_dict, output_box),
+            args=(broker, port, mqtt_topic, df_dict),
             daemon=True
         ).start()
-        st.success("MQTT Listener started!")
 
-if col2.button("⏹ Stop Listener"):
+        st.success("Listener started!")
+
+
+if col2.button("⏹ Stop MQTT Listener"):
     stop_flag = True
-    st.warning("Stopping listener…")
+    st.warning("Listener stopping...")
+
+
+# ------------------------------------------------------
+# AUTO-UPDATING UI BLOCK
+# ------------------------------------------------------
+logs = "\n\n".join(st.session_state["mqtt_log"][-30:])
+output_box.markdown(logs)
